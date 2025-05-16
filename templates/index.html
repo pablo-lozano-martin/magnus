@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gemini Chatbot - Neumorphism Design</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="main-app-layout">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Chat History</div>
+                <!-- Future: <button class="new-chat-btn-icon"><i class="fa-solid fa-pen-to-square"></i></button> -->
+            </div>
+            <ul class="chat-list">
+                <!-- Chat items will be dynamically populated by JavaScript -->
+            </ul>
+            <div class="sidebar-footer">
+                <button class="new-chat-button" id="new-chat-button">
+                    <i class="fa-solid fa-plus"></i> New Chat
+                </button>
+            </div>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-header">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <span class="emoji">🧠</span>
+                    </div>
+                    <div class="logo-text">
+                        <h1>Gemini Assistant</h1>
+                        <p>AI Powered by Gemini 1.5 Flash</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="messages-container" id="messages">
+                <div class="message-timestamp">Today</div>
+                <div class="message received">
+                    <div class="message-bubble">
+                        <div class="message-text">Hi there! I'm your Gemini Assistant. How can I help you today?</div>
+                    </div>
+                    <div class="message-time">Just now</div>
+                </div>
+            </div>
+            
+            <div class="input-area">
+                <div class="input-container">
+                    <div class="message-input">
+                        <input type="text" id="user-input" placeholder="Ask me anything..." autocomplete="off">
+                    </div>
+                </div>
+                <div class="send-button" id="send-button">
+                    <i class="fa-solid fa-paper-plane"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const initialChats = {{ initial_chats | tojson }};
+        const initialActiveThreadId = {{ initial_active_thread_id | tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
