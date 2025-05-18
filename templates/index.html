@@ -12,15 +12,17 @@
     <div class="main-app-layout">
         <div class="sidebar">
             <div class="sidebar-header">
-                <div class="sidebar-title">Chat History</div>
                 <!-- Future: <button class="new-chat-btn-icon"><i class="fa-solid fa-pen-to-square"></i></button> -->
+                <button class="new-chat-button" id="new-chat-button">
+                    <i class="fa-solid fa-plus"></i> New Chat
+                </button>
             </div>
             <ul class="chat-list">
                 <!-- Chat items will be dynamically populated by JavaScript -->
             </ul>
             <div class="sidebar-footer">
-                <button class="new-chat-button" id="new-chat-button">
-                    <i class="fa-solid fa-plus"></i> New Chat
+                <button class="settings-button" id="settings-button">
+                    <i class="fa-solid fa-gear"></i> Settings
                 </button>
             </div>
         </div>
@@ -33,19 +35,14 @@
                     </div>
                     <div class="logo-text">
                         <h1>Gemini Assistant</h1>
-                        <p>AI Powered by Gemini 1.5 Flash</p>
+                        <p id="ai-model-display">AI Powered by Gemini 1.5 Flash</p>
                     </div>
                 </div>
             </div>
             
             <div class="messages-container" id="messages">
                 <div class="message-timestamp">Today</div>
-                <div class="message received">
-                    <div class="message-bubble">
-                        <div class="message-text">Hi there! I'm your Gemini Assistant. How can I help you today?</div>
-                    </div>
-                    <div class="message-time">Just now</div>
-                </div>
+                <!-- Static initial message REMOVED from here -->
             </div>
             
             <div class="input-area">
@@ -66,5 +63,104 @@
         const initialActiveThreadId = {{ initial_active_thread_id | tojson }};
     </script>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+    <!-- Rename Chat Modal -->
+    <div class="modal-backdrop" id="rename-modal-backdrop" style="display: none;"></div>
+    <div class="rename-modal" id="rename-modal-dialog" style="display: none;">
+        <h2 class="rename-modal-title">Rename Chat</h2>
+        <div class="rename-modal-input-container">
+            <input type="text" id="rename-modal-input" placeholder="Enter new chat name">
+        </div>
+        <div class="rename-modal-actions">
+            <button class="rename-modal-button cancel" id="rename-modal-cancel">Cancel</button>
+            <button class="rename-modal-button save" id="rename-modal-save">Save</button>
+        </div>
+    </div>
+
+    <!-- Settings Menu -->
+    <div class="settings-menu" id="settings-menu" style="display: none;">
+        <a href="#" class="settings-menu-item" id="settings-theme-item" data-action="theme">
+            <span><i class="fa-solid fa-palette"></i> Theme</span>
+            <i class="fa-solid fa-chevron-right"></i>
+        </a>
+        <a href="#" class="settings-menu-item" id="settings-models-item" data-action="models">
+            <span><i class="fa-solid fa-cubes"></i> Models</span>
+        </a>
+        <a href="#" class="settings-menu-item" data-action="info">
+            <span><i class="fa-solid fa-circle-info"></i> Info</span>
+        </a>
+    </div>
+
+    <!-- Theme Submenu -->
+    <div class="settings-submenu" id="theme-submenu" style="display: none;">
+        <a href="#" class="settings-menu-item" data-theme="system">
+            <span><i class="fa-solid fa-desktop"></i> System</span> <!-- Changed icon here -->
+        </a>
+        <a href="#" class="settings-menu-item" data-theme="light">
+            <span><i class="fa-solid fa-sun"></i> Light</span>
+        </a>
+        <a href="#" class="settings-menu-item" data-theme="dark">
+            <span><i class="fa-solid fa-moon"></i> Dark</span>
+        </a>
+    </div>
+
+    <!-- Models Modal -->
+    <div class="modal-backdrop" id="models-modal-backdrop" style="display: none;"></div>
+    <div class="models-modal" id="models-modal-dialog" style="display: none;">
+        <h2 class="models-modal-title">Model Settings</h2>
+
+        <div class="models-modal-tabs">
+            <button class="models-modal-tab-button active" data-tab="gemini">Gemini</button>
+            <button class="models-modal-tab-button" data-tab="ollama">Ollama</button>
+        </div>
+
+        <!-- Gemini Tab Content -->
+        <div class="models-modal-tab-content active" id="gemini-tab-content">
+            <div class="models-modal-section">
+                <h3>Gemini API</h3>
+                <div class="models-modal-input-container" id="gemini-api-key-container">
+                    <label for="gemini-api-key">API Key</label>
+                    <input type="password" id="gemini-api-key" placeholder="Enter your Gemini API key">
+                    <button id="toggle-api-visibility" class="toggle-password-button">
+                        <i class="fa-solid fa-eye"></i>
+                    </button>
+                </div>
+                <div class="models-modal-select-container" id="gemini-model-select-container">
+                    <label for="gemini-model-select">Select Model</label>
+                    <select id="gemini-model-select">
+                        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                        <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash 8B</option>
+                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                        <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
+                        <option value="gemini-2.5-flash-preview-04-17">Gemini 2.5 Flash Preview 04-17</option>
+                        <option value="gemini-2.5-pro-preview-05-06">Gemini 2.5 Pro Preview 05-06</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ollama Tab Content -->
+        <div class="models-modal-tab-content" id="ollama-tab-content">
+            <div class="models-modal-section">
+                <h3>Ollama</h3>
+                <div class="models-modal-select-container" id="ollama-model-select-container">
+                    <label for="ollama-model-select">Select Model</label>
+                    <select id="ollama-model-select">
+                        <option value="">Fetching models...</option>
+                    </select>
+                </div>
+                <button id="refresh-ollama-models" class="refresh-button">
+                    <i class="fa-solid fa-rotate"></i> Refresh
+                </button>
+                <p class="ollama-status-text" id="ollama-status-text">Connect to Ollama to see available models. Ensure Ollama is running.</p>
+            </div>
+        </div>
+
+        <div class="models-modal-actions">
+            <button class="models-modal-button cancel" id="models-modal-cancel">Cancel</button>
+            <button class="models-modal-button save" id="models-modal-save">Save</button>
+        </div>
+    </div>
 </body>
 </html>

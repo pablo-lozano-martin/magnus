@@ -1,5 +1,5 @@
 /* Neumorphism theme */
-:root {
+:root { /* Light Theme (Default) */
     --bg-color: #e0e5ec;
     --bg-color-light: #ffffff;
     --text-color: #333;
@@ -13,6 +13,34 @@
     --message-received-bg: #f7f7f7;
     --message-sent-text: #ffffff;
     --message-received-text: #333;
+    --modal-backdrop-bg: rgba(224, 229, 236, 0.5);
+    --settings-menu-item-hover-bg: #e0e5ec; /* var(--bg-color) for light */
+    --chat-item-options-menu-item-hover-bg: #e0e5ec; /* var(--bg-color) for light */
+}
+
+html[data-theme="dark"] {
+    --bg-color: #2c2f33; /* Dark background */
+    --bg-color-light: #36393f; /* Slightly lighter dark for elements, inputs */
+    --text-color: #dcddde; /* Light grey for main text */
+    --text-color-light: #b9bbbe; /* Medium grey for secondary text, icons */
+    --text-color-dark: #ffffff; /* White for headings, prominent text */
+    --accent-color: #5263b4; /* More desaturated/darker blue for dark mode */
+    --accent-color-hover: #4956a9; /* Darker version for hover states */
+    
+    /* Dark Neumorphism Shadows */
+    /* Outer shadows for raised elements */
+    --shadow-light: rgba(60, 64, 72, 0.7); /* Lighter part of the shadow (appears "above" on dark bg) */
+    --shadow-dark: rgba(20, 22, 25, 0.7); /* Darker part of the shadow (appears "below" on dark bg) */
+
+    /* Specific message colors for dark theme */
+    --message-sent-bg: var(--accent-color); /* Use the dark theme accent color */
+    --message-received-bg: #3b3e44; /* Slightly different dark for received messages */
+    --message-sent-text: #ffffff;
+    --message-received-text: #e0e0e0; /* Light text for received messages */
+
+    --modal-backdrop-bg: rgba(44, 47, 51, 0.5); /* Darker backdrop */
+    --settings-menu-item-hover-bg: #36393f; /* var(--bg-color-light) for dark */
+    --chat-item-options-menu-item-hover-bg: #36393f; /* var(--bg-color-light) for dark */
 }
 
 * {
@@ -49,29 +77,28 @@ body {
     box-shadow: 
         8px 8px 15px var(--shadow-dark), 
         -8px -8px 15px var(--shadow-light);
-    padding: 20px 10px 20px 10px;
+    padding: 20px 10px 20px 10px; /* Base padding for the sidebar */
     display: flex;
     flex-direction: column;
-    overflow: hidden; /* Contains shadows of internal elements */
+    overflow: hidden; /* This can be re-enabled now if desired for other content */
     flex-shrink: 0; /* Prevent sidebar from shrinking */
 }
 
 .sidebar-header {
-    padding-bottom: 15px;
-    margin-bottom: 15px;
+    /* padding-bottom: 15px; Original padding, will be part of button if it's the only element */
+    margin-bottom: 15px; /* Space after the header (and button) before the list */
     border-bottom: 1px solid rgba(163, 177, 198, 0.3); /* Softer border */
-    text-align: center;
-}
-
-.sidebar-title {
-    font-size: 17px;
-    font-weight: 600;
-    color: var(--text-color-dark);
+    display: flex; 
+    /* justify-content: flex-end; No longer needed if button is full width */
+    /* align-items: center; No longer needed if button is full width and defines height */
+    padding-left: 10px; /* Match chat-list's horizontal padding */
+    padding-right: 10px; /* Match chat-list's horizontal padding */
+    padding-bottom: 15px; /* Keep the space for the border-bottom */
 }
 
 .chat-list {
     list-style: none;
-    padding: 10px;
+    padding: 10px; 
     margin: 0;
     overflow-y: auto;
     flex-grow: 1;
@@ -81,7 +108,7 @@ body {
 .chat-list-item {
     display: flex;
     align-items: center;
-    padding: 12px 15px;
+    padding: 12px 15px; /* Adjusted padding to make space for options button */
     margin-bottom: 12px;
     border-radius: 12px;
     background-color: var(--bg-color);
@@ -90,10 +117,11 @@ body {
         -3px -3px 7px var(--shadow-light);
     cursor: pointer;
     transition: all 0.2s ease;
+    position: relative; /* For positioning the options menu */
 }
 
-.chat-list-item:not(.active):hover { /* Apply hover effect only if not active */
-    transform: scale(0.98);
+.chat-list-item:not(.active):hover .chat-item-options-button {
+    opacity: 1; /* Show options button on hover */
 }
 
 .chat-list-item.active {
@@ -131,33 +159,136 @@ body {
     color: var(--text-color-light);
     margin-left: 8px;
     flex-shrink: 0;
+    /* margin-right: 20px; /* Make space for options button if it's always visible */
+}
+
+.chat-item-options-button {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 5px; /* This padding contributes to the button's clickable area */
+    cursor: pointer;
+    color: var(--text-color-light);
+    opacity: 0; /* Hidden by default, shown on hover of parent */
+    transition: opacity 0.2s ease-in-out;
+    z-index: 5; /* Ensure it's above other elements if needed */
+}
+
+.chat-list-item.active .chat-item-options-button {
+    color: var(--message-sent-text); /* Match active item text color */
+    opacity: 1; /* Keep visible on active item */
+}
+
+.chat-item-options-button:hover {
+    color: var(--accent-color);
+}
+
+.chat-list-item.active .chat-item-options-button:hover {
+    color: #f0f0f0; /* Lighter color for hover on active item */
+}
+
+.chat-item-options-menu {
+    display: none; /* Hidden by default */
+    position: absolute; /* Will be positioned by JS relative to viewport/document */
+    /* top, left are set by JavaScript */
+    background-color: var(--bg-color-light);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15), 
+                4px 4px 8px var(--shadow-dark), 
+                -4px -4px 8px var(--shadow-light);
+    padding: 8px 0;
+    z-index: 1000; /* High z-index to appear above other content */
+    min-width: 150px;
+}
+
+.chat-item-options-menu.visible {
+    display: block;
+}
+
+.chat-item-options-menu a {
+    display: flex; /* Use flex for icon and text alignment */
+    align-items: center;
+    gap: 8px; /* Space between icon and text */
+    padding: 10px 15px;
+    text-decoration: none;
+    font-size: 13px;
+    color: var(--text-color-dark);
+    transition: background-color 0.2s ease;
+}
+
+.chat-item-options-menu a:hover {
+    background-color: var(--chat-item-options-menu-item-hover-bg); /* Subtle hover for menu items */
+}
+
+.chat-item-options-menu a i {
+    font-size: 12px; /* Adjust icon size if needed */
+    width: 16px; /* Ensure consistent icon spacing */
+    text-align: center;
+    color: var(--text-color-light);
+}
+
+.chat-item-options-menu a:hover i {
+    color: var(--accent-color);
 }
 
 .sidebar-footer {
-    margin-top: auto;
-    padding-top: 15px;
+    margin-top: auto; /* Pushes footer to the bottom */
+    padding-top: 15px; /* Space above the footer content */
     padding-left: 10px; /* Align with chat-list horizontal padding */
     padding-right: 10px; /* Align with chat-list horizontal padding */
     border-top: 1px solid rgba(163, 177, 198, 0.3);
+    position: relative; /* For positioning settings menu relative to footer or button */
 }
 
-.new-chat-button {
+.settings-button {
     width: 100%;
-    padding: 12px 15px;
-    border-radius: 10px;
-    background-color: var(--accent-color);
-    color: white;
+    padding: 12px 15px; /* Matches .chat-list-item padding */
+    border-radius: 12px; /* Matches .chat-list-item border-radius */
+    background-color: var(--bg-color); /* Matches .chat-list-item background */
+    color: var(--text-color-dark); /* Matches .chat-item-text color */
     border: none;
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 13px; /* Matches .chat-item-text font-size */
+    font-weight: 500; /* Matches .chat-item-text font-weight */
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     box-shadow: 
-        3px 3px 6px var(--shadow-dark), 
-        -3px -3px 6px var(--shadow-light);
+        3px 3px 7px var(--shadow-dark), /* Matches .chat-list-item shadow */
+        -3px -3px 7px var(--shadow-light); /* Matches .chat-list-item shadow */
+    transition: all 0.2s ease; /* Matches .chat-list-item transition */
+}
+
+.settings-button:hover {
+    transform: scale(0.98); /* Consistent hover effect */
+    /* background-color: var(--bg-color-light); REMOVED - No background change on hover */
+    /* If chat-list-item has a different hover (e.g., only options button appears), adjust this accordingly.
+       For now, this provides a clear interactive feedback similar to other buttons. */
+}
+
+.settings-button i {
+    font-size: 12px;
+}
+
+.new-chat-button {
+    width: 100%; /* Make button take full width of its container in header */
+    padding: 14px 15px; /* Increased vertical padding to make it taller, matches .chat-list-item horizontal */
+    border-radius: 12px; /* Match .chat-list-item border-radius */
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    font-size: 13px; /* Match .chat-item-text font-size */
+    font-weight: 500; /* Match .chat-item-text font-weight */
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-shadow: 
+        3px 3px 7px var(--shadow-dark), /* Corrected var syntax */
+        -3px -3px 7px var(--shadow-light); /* Corrected var syntax, matches .chat-list-item shadow */
     transition: all 0.2s ease;
 }
 
@@ -388,11 +519,12 @@ body {
 }
 
 .send-button.active {
-    background-color: var(--accent-color);
-    color: white;
+    background-color: var(--accent-color); /* Change background to blue */
+    color: white; /* Change icon color to white */
+    /* Keep the same shadow style as the inactive state to maintain 3D look */
     box-shadow: 
-        inset 2px 2px 5px rgba(0, 0, 0, 0.2), 
-        inset -1px -1px 3px rgba(255, 255, 255, 0.3);
+        4px 4px 8px var(--shadow-dark), 
+        -4px -4px 8px var(--shadow-light); 
 }
 
 .send-button:hover {
@@ -611,4 +743,386 @@ body {
     .message {
         max-width: 90%;
     }
+}
+
+/* Modal Styles */
+.modal-open-blur .main-app-layout { /* Apply blur to main layout when modal is open */
+    filter: blur(4px);
+    transition: filter 0.3s ease-out;
+}
+
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--modal-backdrop-bg); /* Semi-transparent version of bg-color */
+    /* backdrop-filter: blur(3px); // Alternative or additional blur, test for performance */
+    z-index: 1040; /* Below modal, above other content */
+    display: none; /* Hidden by default */
+}
+
+.rename-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: var(--bg-color);
+    border-radius: 18px;
+    box-shadow: 
+        8px 8px 15px var(--shadow-dark), 
+        -8px -8px 15px var(--shadow-light);
+    padding: 25px 30px;
+    z-index: 1050; /* Above backdrop */
+    width: 90%;
+    max-width: 400px;
+    display: none; /* Hidden by default */
+    flex-direction: column;
+    gap: 20px;
+}
+
+.rename-modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-color-dark);
+    text-align: center;
+    margin-bottom: 5px;
+}
+
+.rename-modal-input-container {
+    padding: 4px;
+    background-color: var(--bg-color);
+    border-radius: 12px;
+    box-shadow: 
+        inset 2px 2px 5px var(--shadow-dark), 
+        inset -2px -2px 5px var(--shadow-light);
+}
+
+.rename-modal input[type="text"] {
+    width: 100%;
+    padding: 12px 15px;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 14px;
+    color: var(--text-color-dark);
+    border-radius: 10px; /* Match container's inner rounding */
+}
+
+.rename-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 15px;
+    margin-top: 10px;
+}
+
+.rename-modal-button {
+    padding: 10px 20px;
+    border-radius: 10px;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 
+        3px 3px 6px var(--shadow-dark), 
+        -3px 3px 6px var(--shadow-light);
+}
+
+.rename-modal-button.save {
+    background-color: var(--accent-color);
+    color: white;
+}
+.rename-modal-button.save:hover {
+    background-color: var(--accent-color-hover);
+    transform: scale(0.98);
+}
+
+.rename-modal-button.cancel {
+    background-color: var(--bg-color-light);
+    color: var(--text-color-dark);
+}
+.rename-modal-button.cancel:hover {
+    background-color: #f0f0f0; /* Slightly darker for hover */
+    transform: scale(0.98);
+}
+
+/* Settings Menu Styles */
+.settings-menu, .settings-submenu {
+    display: none; /* Hidden by default, JS will toggle */
+    position: absolute; 
+    background-color: var(--bg-color-light);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15), 
+                4px 4px 8px var(--shadow-dark), 
+                -4px 4px 8px var(--shadow-light);
+    padding: 8px 0;
+    z-index: 1100; /* Above chat options menu */
+    min-width: 180px;
+}
+
+.settings-menu-item {
+    display: flex;
+    justify-content: space-between; /* For Theme item's arrow */
+    align-items: center;
+    gap: 8px;
+    padding: 10px 15px;
+    text-decoration: none;
+    font-size: 13px;
+    color: var(--text-color-dark);
+    transition: background-color 0.2s ease;
+}
+
+.settings-menu-item:hover {
+    background-color: var(--settings-menu-item-hover-bg); /* Subtle hover */
+}
+
+.settings-menu-item span { /* Container for icon and text */
+    display: flex;
+    align-items: center;
+}
+
+.settings-menu-item span i {
+    margin-right: 10px; /* Space between icon and text */
+    font-size: 12px; /* Match other icons like in chat options */
+    width: 16px; /* Ensure consistent icon spacing */
+    text-align: center;
+    color: var(--text-color-light);
+}
+.settings-menu-item:hover span i {
+    color: var(--accent-color); /* Icon color change on hover, matching chat options */
+}
+
+.settings-menu-item i.fa-chevron-right {
+    font-size: 10px;
+    color: var(--text-color-light);
+}
+
+/* Models Modal Styles */
+.models-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: var(--bg-color);
+    border-radius: 18px;
+    box-shadow: 
+        8px 8px 15px var(--shadow-dark), 
+        -8px -8px 15px var(--shadow-light);
+    padding: 25px 30px;
+    z-index: 1050; /* Above backdrop */
+    width: 90%;
+    max-width: 400px;
+    display: none; /* Hidden by default */
+    flex-direction: column;
+    gap: 15px; /* Adjusted gap */
+}
+
+.models-modal-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--shadow-dark); /* Separator line for tabs */
+    margin-bottom: 15px;
+}
+
+.models-modal-tab-button {
+    padding: 10px 20px;
+    cursor: pointer;
+    border: none;
+    background-color: transparent;
+    color: var(--text-color-light);
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 3px solid transparent;
+    transition: color 0.2s ease, border-bottom-color 0.2s ease;
+}
+
+.models-modal-tab-button:hover {
+    color: var(--text-color-dark);
+}
+
+.models-modal-tab-button.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+}
+
+.models-modal-tab-content {
+    display: none; /* Hidden by default */
+    flex-direction: column;
+    gap: 15px;
+}
+
+.models-modal-tab-content.active {
+    display: flex; /* Show active tab content */
+}
+
+.models-modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-color-dark);
+    text-align: center;
+    margin-bottom: 5px;
+}
+
+.models-modal-section {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.models-modal-section h3 {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text-color-dark);
+    margin-bottom: 5px;
+}
+
+.models-modal-input-container, .models-modal-select-container {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.models-modal-select-container {
+    position: relative;
+}
+
+.refresh-button {
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 5px 0;
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.refresh-button:hover {
+    text-decoration: underline;
+}
+
+.refresh-button i {
+    font-size: 11px;
+}
+
+.ollama-status-text {
+    font-size: 12px;
+    color: var(--text-color-light);
+    margin-top: 5px;
+    text-align: center;
+}
+
+.models-modal-input-container label, .models-modal-select-container label {
+    font-size: 13px;
+    color: var(--text-color-light);
+    font-weight: 500;
+}
+
+.models-modal-input-container {
+    position: relative;
+}
+
+.models-modal-input-container input {
+    width: 100%;
+    padding: 12px 35px 12px 15px; /* Right padding for the eye icon */
+    border: none;
+    outline: none;
+    background-color: var(--bg-color);
+    font-size: 14px;
+    color: var(--text-color-dark);
+    border-radius: 10px;
+    box-shadow: 
+        inset 2px 2px 5px var(--shadow-dark), 
+        inset -2px -2px 5px var(--shadow-light);
+}
+
+.toggle-password-button {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-color-light);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 5px;
+    margin-top: 12px; /* Adjust based on label height */
+}
+
+.toggle-password-button:hover {
+    color: var(--accent-color);
+}
+
+.models-modal-select-container select {
+    padding: 12px 15px;
+    border: none;
+    outline: none;
+    background-color: var(--bg-color);
+    font-size: 14px;
+    color: var(--text-color-dark);
+    border-radius: 10px;
+    box-shadow: 
+        inset 2px 2px 5px var(--shadow-dark), 
+        inset -2px -2px 5px var(--shadow-light);
+    appearance: none; /* Remove default arrow */
+    cursor: pointer;
+}
+
+/* Custom dropdown arrow */
+.models-modal-select-container {
+    position: relative;
+}
+
+.models-modal-select-container::after {
+    content: '\f078'; /* fa-chevron-down */
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    position: absolute;
+    right: 15px;
+    bottom: 14px;
+    color: var(--text-color-light);
+    pointer-events: none;
+    font-size: 12px;
+}
+
+.models-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 15px;
+    margin-top: 10px;
+}
+
+.models-modal-button {
+    padding: 10px 20px;
+    border-radius: 10px;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 
+        3px 3px 6px var(--shadow-dark), 
+        -3px 3px 6px var(--shadow-light);
+}
+
+.models-modal-button.save {
+    background-color: var(--accent-color);
+    color: white;
+}
+.models-modal-button.save:hover {
+    background-color: var(--accent-color-hover);
+    transform: scale(0.98);
+}
+
+.models-modal-button.cancel {
+    background-color: var(--bg-color-light);
+    color: var(--text-color-dark);
+}
+.models-modal-button.cancel:hover {
+    background-color: #f0f0f0; /* Slightly darker for hover */
+    transform: scale(0.98);
 }

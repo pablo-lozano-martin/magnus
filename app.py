@@ -3,6 +3,9 @@ from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, session
 import uuid # For generating unique thread IDs
 from pathlib import Path # Added for explicit .env path
+import sqlite3
+import datetime
+import ollama # Added for Ollama integration
 
 # Explicitly load .env from the script's directory or project root
 # This assumes app.py is in the project root directory 'magnus'
@@ -16,18 +19,173 @@ else:
     load_dotenv(override=True)
 
 # Import the chat logic
-from chat import invoke_chat_graph, API_KEY as CHAT_API_KEY, app_graph # Import app_graph
+from chat import invoke_chat_graph, set_active_llm_provider # Import new function
 from langchain_core.messages import HumanMessage, AIMessage # For message type checking
 
 # Load environment variables from .env file
 load_dotenv()
 
 # API_KEY is primarily used by chat.py now, but app.py can check it for initial health.
-API_KEY = os.getenv("GEMINI_API_KEY") 
+# GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # chat.py handles this
+
+# Define a constant for the client-side placeholder ID, if needed for backend checks
+# However, client will send `null` for thread_id for new chats.
+# TEMP_NEW_CHAT_ID_MARKER = "temp-new-chat-placeholder" # Or rely on thread_id being None
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
+
+DATABASE = Path(__file__).resolve().parent / 'chat_history.db'
+
+# --- Database Helper Functions ---
+def get_db_connection():
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
+    with open(Path(__file__).resolve().parent / 'schema.sql', 'r') as f:
+        conn.executescript(f.read())
+    conn.commit()
+    conn.close()
+    app.logger.info("Database initialized.")
+
+def add_conversation_to_db(thread_id, title, icon):
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO conversations (id, title, icon, updated_at, is_pinned) VALUES (?, ?, ?, ?, ?)", # Added is_pinned
+            (thread_id, title, icon, datetime.datetime.now(datetime.timezone.utc), 0) # Default is_pinned to 0
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        app.logger.warning(f"Conversation with ID {thread_id} already exists or other integrity error.")
+    finally:
+        conn.close()
+
+def update_conversation_in_db(thread_id, title, icon):
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE conversations SET title = ?, icon = ?, updated_at = ? WHERE id = ?",
+        (title, icon, datetime.datetime.now(datetime.timezone.utc), thread_id)
+    )
+    conn.commit()
+    conn.close()
+
+def add_message_to_db(conversation_id, sender_type, content, sequence):
+    conn = get_db_connection()
+    message_id = str(uuid.uuid4()) # Generate UUID for the message
+    conn.execute(
+        "INSERT INTO messages (id, conversation_id, sender_type, content, sequence) VALUES (?, ?, ?, ?, ?)", # Added id column
+        (message_id, conversation_id, sender_type, content, sequence) # Pass message_id
+    )
+    conn.commit()
+    conn.close()
+
+def get_messages_from_db(conversation_id):
+    conn = get_db_connection()
+    messages_cursor = conn.execute(
+        "SELECT sender_type, content FROM messages WHERE conversation_id = ? ORDER BY sequence ASC",
+        (conversation_id,)
+    )
+    messages = [{'type': row['sender_type'], 'content': row['content']} for row in messages_cursor.fetchall()]
+    conn.close()
+    return messages
+
+def get_all_conversations_from_db():
+    conn = get_db_connection()
+    # Order by is_pinned (descending, so pinned are first), then by updated_at (descending)
+    conv_cursor = conn.execute("SELECT id, title, icon, is_pinned FROM conversations ORDER BY is_pinned DESC, updated_at DESC")
+    conversations = [{'thread_id': row['id'], 'title': row['title'], 'icon': row['icon'], 'is_pinned': bool(row['is_pinned'])} for row in conv_cursor.fetchall()]
+    conn.close()
+    return conversations
+
+def get_last_message_sequence(conversation_id):
+    conn = get_db_connection()
+    cursor = conn.execute("SELECT MAX(sequence) as last_sequence FROM messages WHERE conversation_id = ?", (conversation_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result['last_sequence'] if result and result['last_sequence'] is not None else -1
+
+def update_conversation_updated_at(thread_id):
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE conversations SET updated_at = ? WHERE id = ?",
+        (datetime.datetime.now(datetime.timezone.utc), thread_id)
+    )
+    conn.commit()
+    conn.close()
+
+def delete_conversation_from_db(thread_id):
+    conn = get_db_connection()
+    try:
+        # Delete messages associated with the conversation
+        conn.execute("DELETE FROM messages WHERE conversation_id = ?", (thread_id,))
+        # Delete the conversation itself
+        conn.execute("DELETE FROM conversations WHERE id = ?", (thread_id,))
+        conn.commit()
+        app.logger.info(f"Conversation {thread_id} and its messages deleted from DB.")
+    except Exception as e:
+        app.logger.error(f"Error deleting conversation {thread_id}: {e}")
+    finally:
+        conn.close()
+
+def rename_conversation_in_db(thread_id, new_title):
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+            (new_title, datetime.datetime.now(datetime.timezone.utc), thread_id)
+        )
+        conn.commit()
+        app.logger.info(f"Conversation {thread_id} renamed to '{new_title}'.")
+    except Exception as e:
+        app.logger.error(f"Error renaming conversation {thread_id} to '{new_title}': {e}")
+    finally:
+        conn.close()
+
+def toggle_pin_conversation_in_db(thread_id):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute("SELECT is_pinned FROM conversations WHERE id = ?", (thread_id,))
+        row = cursor.fetchone()
+        if row is None:
+            app.logger.error(f"Conversation {thread_id} not found for pinning.")
+            return False
+
+        current_is_pinned = row['is_pinned']
+        new_is_pinned = 1 if current_is_pinned == 0 else 0 # Toggle the value
+
+        conn.execute(
+            "UPDATE conversations SET is_pinned = ? WHERE id = ?", # Do not update updated_at here, pinning shouldn't change recency for non-pinned items
+            (new_is_pinned, thread_id)
+        )
+        conn.commit()
+        app.logger.info(f"Conversation {thread_id} pin status toggled to {new_is_pinned}.")
+        return True
+    except Exception as e:
+        app.logger.error(f"Error toggling pin for conversation {thread_id}: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+# Initialize DB if it doesn't exist or schema is not applied
+if not DATABASE.exists():
+    init_db()
+else: # Basic check if tables exist, can be more robust
+    conn = get_db_connection()
+    try:
+        conn.execute("SELECT 1 FROM conversations LIMIT 1")
+        conn.execute("SELECT 1 FROM messages LIMIT 1")
+    except sqlite3.OperationalError:
+        app.logger.warning("Database tables not found, re-initializing.")
+        init_db() # Re-initialize if tables are missing
+    finally:
+        conn.close()
+
 
 # --- Helper for chat icons ---
 CHAT_ICONS = ['📄', '💡', '⚙️', '💬', '🧠', '🚀', '✨']
@@ -40,63 +198,44 @@ def get_next_icon(current_icon_index):
 
 @app.route('/')
 def index():
-    session.setdefault('icon_index', -1) # Initialize if not present
-
-    if 'chats' not in session or not session['chats']:
-        new_thread_id = str(uuid.uuid4())
-        # First chat also starts as a "New Conversation" with placeholder icon
-        session['chats'] = [{'thread_id': new_thread_id, 'title': 'New Conversation', 'icon': NEW_CHAT_PLACEHOLDER_ICON}]
-        session['current_thread_id'] = new_thread_id
-        # icon_index remains -1 until the first message materializes this chat
+    session.setdefault('icon_index', -1) 
     
-    # Ensure current_thread_id is valid and points to an existing chat
-    # If current_thread_id is stale or missing, set to the first chat's ID
-    current_thread_id = session.get('current_thread_id')
-    chat_thread_ids = [chat['thread_id'] for chat in session.get('chats', [])]
-    if not current_thread_id or current_thread_id not in chat_thread_ids:
-        if session.get('chats'):
-            session['current_thread_id'] = session['chats'][0]['thread_id']
-        else: # Should not happen if logic above is correct, but as a fallback
-            new_thread_id = str(uuid.uuid4())
-            session['chats'] = [{'thread_id': new_thread_id, 'title': 'New Conversation', 'icon': NEW_CHAT_PLACEHOLDER_ICON}]
-            session['current_thread_id'] = new_thread_id
-            # icon_index remains -1
+    db_conversations = get_all_conversations_from_db()
+    session['chats'] = db_conversations # Store real chats from DB
 
-    # Ensure the active chat is at the top of the list for UI consistency if needed,
-    # or rely on JS to always find and mark active. For now, let's assume JS handles highlighting.
-    # The order in session['chats'] will represent the order in UI (newest/active first).
+    active_thread_id = None
+    if db_conversations:
+        # Ensure current_thread_id from session is valid, default to the most recently updated
+        current_thread_id_session = session.get('current_thread_id')
+        db_thread_ids = [chat['thread_id'] for chat in db_conversations]
+        if current_thread_id_session in db_thread_ids:
+            active_thread_id = current_thread_id_session
+        else:
+            active_thread_id = db_conversations[0]['thread_id']
+            session['current_thread_id'] = active_thread_id
+    else:
+        # No real chats in DB, client will handle showing a placeholder.
+        # Clear current_thread_id from session if it pointed to a now-deleted chat.
+        session.pop('current_thread_id', None) 
+        active_thread_id = None # Explicitly None
 
     return render_template('index.html', 
                            initial_chats=session.get('chats', []), 
-                           initial_active_thread_id=session.get('current_thread_id'))
+                           initial_active_thread_id=active_thread_id) # Can be None
 
 @app.route('/new_chat', methods=['POST'])
 def new_chat():
-    # Don't increment icon_index here, only when a chat gets its first message
-    new_thread_id = str(uuid.uuid4())
-    new_chat_item = {'thread_id': new_thread_id, 'title': 'New Conversation', 'icon': NEW_CHAT_PLACEHOLDER_ICON}
+    # This route is now primarily for client-side state management if needed,
+    # but the core logic of showing a placeholder is handled by client.
+    # It no longer creates a DB entry.
+    # We can return the current list of real chats if the client wants to refresh,
+    # and a marker for the client to activate its placeholder.
     
-    if 'chats' not in session:
-        session['chats'] = []
-    session['chats'].insert(0, new_chat_item) # Add new chat to the beginning
-    session['current_thread_id'] = new_thread_id
-    
-    app.logger.info(f"New chat created: {new_thread_id}. Current chats: {len(session['chats'])}")
-    
-    # --- Start Enhanced Debug Logging ---
-    data_to_jsonify = {'chats': session['chats'], 'active_thread_id': new_thread_id}
-    app.logger.info(f"Data being passed to jsonify in /new_chat: {data_to_jsonify}")
-    try:
-        # Test if jsonify itself would raise an error with this data (it usually doesn't directly, but good to be thorough)
-        # This is more for understanding the data structure.
-        from flask import json
-        json.dumps(data_to_jsonify) # This will raise an error if data_to_jsonify is not serializable
-        app.logger.info("Data for /new_chat successfully serialized by json.dumps for logging.")
-    except Exception as e:
-        app.logger.error(f"Error trying to json.dumps data for /new_chat for logging: {e}", exc_info=True)
-    # --- End Enhanced Debug Logging ---
-        
-    return jsonify(data_to_jsonify)
+    # For simplicity, let client manage placeholder. If this endpoint is still called,
+    # ensure it doesn't break anything. It could just return current chats.
+    session['current_thread_id'] = None # Signal client to use its temp ID
+    return jsonify({'chats': get_all_conversations_from_db(), 'active_thread_id': None, 'use_placeholder': True })
+
 
 @app.route('/switch_chat', methods=['POST'])
 def switch_chat():
@@ -107,86 +246,134 @@ def switch_chat():
         return jsonify({'error': 'Thread ID missing'}), 400
 
     session['current_thread_id'] = target_thread_id
+    
+    # Fetch the latest, ordered list of conversations from the database
+    # This ensures the sidebar reflects the correct order (e.g., by updated_at)
+    # and includes any changes made by other operations.
+    all_db_conversations = get_all_conversations_from_db()
+    session['chats'] = all_db_conversations # Update session with the canonical list
 
-    # Reorder chats to bring the target_thread_id to the front
-    chats = session.get('chats', [])
-    chat_to_move = None
-    for i, chat_item in enumerate(chats):
-        if chat_item['thread_id'] == target_thread_id:
-            chat_to_move = chats.pop(i)
-            break
-    if chat_to_move:
-        chats.insert(0, chat_to_move)
-    session['chats'] = chats
-
-    history_messages = []
-    try:
-        config = {"configurable": {"thread_id": target_thread_id}}
-        graph_state = app_graph.get_state(config)
-        if graph_state and graph_state.values.get('messages'):
-            for msg in graph_state.values['messages']:
-                msg_type = 'human' if isinstance(msg, HumanMessage) else 'ai'
-                history_messages.append({'type': msg_type, 'content': msg.content})
-    except Exception as e:
-        app.logger.error(f"Error retrieving state for thread {target_thread_id}: {e}")
-        # Not returning error to client here, just empty messages if state fails
+    history_messages = get_messages_from_db(target_thread_id)
 
     return jsonify({
         'messages': history_messages, 
-        'chats': session['chats'], # Send updated order
+        'chats': session['chats'], # Send the DB-fetched, ordered list
         'active_thread_id': target_thread_id
     })
 
 
 @app.route('/chat', methods=['POST'])
-def chat_route(): # Renamed to avoid conflict with chat module
+def chat_route(): 
     user_message_text = request.json.get('message', '')
+    requested_thread_id = request.json.get('thread_id') # Client will send null for new chat
+
+    # Ensure the chat module is using the correct provider based on session
+    active_provider = session.get('active_provider', 'gemini')
+    active_model_name = session.get('active_model_name') # This will be None if Gemini is using its default
     
-    if not CHAT_API_KEY:
-        app.logger.error('API key not found or model not initialized in chat.py.')
-        return jsonify({'error': 'AI service is not configured. Please check server logs.'}), 500
+    # For Gemini, API key is also needed if it was changed
+    gemini_api_key_for_session = session.get('gemini_api_key', os.getenv("GEMINI_API_KEY"))
+
+    if active_provider == 'gemini':
+        if not gemini_api_key_for_session:
+            app.logger.error('Gemini API key not found in session or environment for /chat call.')
+            return jsonify({'error': 'Gemini AI service is not configured (API key missing).'}), 500
+        # chat.py's set_active_llm_provider will use its global GEMINI_MODEL_NAME if active_model_name is None
+        set_active_llm_provider(provider='gemini', api_key=gemini_api_key_for_session, model_name=active_model_name)
+    elif active_provider == 'ollama':
+        if not active_model_name:
+            app.logger.error('Ollama model name not found in session for /chat call.')
+            return jsonify({'error': 'Ollama model not selected.'}), 500
+        set_active_llm_provider(provider='ollama', model_name=active_model_name)
+    else:
+        app.logger.error(f"Unknown provider in session: {active_provider}")
+        return jsonify({'error': 'AI provider misconfiguration.'}), 500
     
-    thread_id = session.get('current_thread_id')
-    if not thread_id:
-        # This case should ideally be handled by '/' creating a default chat
-        app.logger.warning("No current_thread_id in session for /chat. Creating a new one.")
-        # For safety, redirect or create a new chat session, though this indicates a flow issue.
-        # For now, let's assume '/' or '/new_chat' always sets it.
-        return jsonify({'error': 'No active chat session. Please start a new chat.'}), 400
+    # If requested_thread_id is None, it's a new chat to be created.
+    # Otherwise, it's an existing chat, get it from session.
+    is_newly_created = False
+    title_updated = False # Renamed from materializing_new_chat
+    
+    if requested_thread_id is None: # Indicates a new chat from a placeholder
+        is_newly_created = True
+        thread_id = str(uuid.uuid4()) # Generate new ID for the conversation
+        session['current_thread_id'] = thread_id # Make this the active one
+
+        words = user_message_text.split(' ')
+        new_title = ' '.join(words[:3])
+        if not new_title: new_title = "Chat"
+        
+        session['icon_index'] = session.get('icon_index', -1) + 1
+        new_icon = get_next_icon(session['icon_index'])
+        
+        add_conversation_to_db(thread_id, new_title, new_icon) # This sets created_at and updated_at
+        app.logger.info(f"New conversation created in DB: {thread_id} with title '{new_title}'")
+        # title_updated flag is relevant if an existing "New Conversation" gets its first message.
+        # For a brand new chat, this is handled by creation.
+    else:
+        thread_id = requested_thread_id
+        session['current_thread_id'] = thread_id
+
 
     response_data = {}
     try:
-        ai_response_content = invoke_chat_graph(user_message_text, thread_id)
+        # Store user message
+        last_sequence = get_last_message_sequence(thread_id)
+        user_message_sequence = last_sequence + 1
+        add_message_to_db(thread_id, 'human', user_message_text, user_message_sequence)
+
+        # Prepare full history for LangGraph
+        db_messages_for_graph = get_messages_from_db(thread_id) # Gets all messages including the one just added
+        
+        # Convert DB messages to Langchain BaseMessage objects for the graph
+        langchain_history = []
+        for msg in db_messages_for_graph:
+            if msg['type'] == 'human':
+                langchain_history.append(HumanMessage(content=msg['content']))
+            else: # 'ai'
+                langchain_history.append(AIMessage(content=msg['content']))
+
+        ai_response_content = invoke_chat_graph(langchain_history) # Pass full history
         
         if "Error:" in ai_response_content or "Sorry, I encountered an error" in ai_response_content:
             app.logger.warning(f"Chat logic returned an error message: {ai_response_content}")
+            # Optionally store this error as an AI message in DB if desired
+            # add_message_to_db(thread_id, 'ai', ai_response_content, user_message_sequence + 1)
             return jsonify({'error': ai_response_content})
         
+        # Store AI message
+        add_message_to_db(thread_id, 'ai', ai_response_content, user_message_sequence + 1)
         response_data['response'] = ai_response_content
-
-        # Update chat title and icon if it's "New Conversation"
-        current_chats = session.get('chats', [])
-        title_updated = False # Also implies icon update now
-        for chat_item in current_chats:
-            if chat_item['thread_id'] == thread_id and chat_item['title'] == 'New Conversation':
-                if user_message_text: # Ensure there's a message to derive title from
-                    words = user_message_text.split(' ')
-                    chat_item['title'] = ' '.join(words[:3])
-                    if not chat_item['title']: # Handle empty message or very short
-                        chat_item['title'] = "Chat"
-                    
-                    # Update icon from placeholder to a cycled one
-                    session['icon_index'] = session.get('icon_index', -1) + 1
-                    chat_item['icon'] = get_next_icon(session['icon_index'])
-                    
-                    title_updated = True
-                    app.logger.info(f"Chat materialized: {thread_id} to title '{chat_item['title']}' with icon '{chat_item['icon']}'")
-                break
         
-        if title_updated:
-            session['chats'] = current_chats # Save updated list back to session
+        # Ensure conversation's updated_at is set
+        if not is_newly_created: # If new, add_conversation_to_db already set updated_at
+            update_conversation_updated_at(thread_id)
+
+        # Check if an existing chat (that might have been named "New Conversation") needs title update
+        # This logic is now less likely to be hit for the "New Conversation" placeholder flow,
+        # as new chats get their title upon creation.
+        # It might still be relevant if a user manually renames a chat to "New Conversation".
+        if not is_newly_created:
+            active_chat_from_db = next((c for c in get_all_conversations_from_db() if c['thread_id'] == thread_id), None)
+            if active_chat_from_db and active_chat_from_db['title'] == 'New Conversation':
+                if user_message_text: 
+                    words = user_message_text.split(' ')
+                    updated_title = ' '.join(words[:3])
+                    if not updated_title: updated_title = "Chat"
+                    
+                    session['icon_index'] = session.get('icon_index', -1) + 1 # Get a new icon
+                    updated_icon = get_next_icon(session['icon_index'])
+                    
+                    update_conversation_in_db(thread_id, updated_title, updated_icon) # This also updates updated_at
+                    title_updated = True
+                    app.logger.info(f"Existing chat {thread_id} title/icon updated to '{updated_title}'/'{updated_icon}'")
+
+        if is_newly_created or title_updated:
+            session['chats'] = get_all_conversations_from_db() # Refresh session chats from DB
             response_data['chats'] = session['chats']
-            response_data['active_thread_id'] = thread_id
+            response_data['active_thread_id'] = thread_id 
+            if is_newly_created:
+                response_data['newly_created_thread_id'] = thread_id
         
         return jsonify(response_data)
             
@@ -194,11 +381,217 @@ def chat_route(): # Renamed to avoid conflict with chat module
         app.logger.error(f"Error in /chat route or calling chat logic: {e}", exc_info=True)
         return jsonify({'error': f'An unexpected server error occurred: {str(e)}'}), 500
 
+@app.route('/rename_chat', methods=['POST'])
+def rename_chat_route():
+    data = request.get_json()
+    thread_id = data.get('thread_id')
+    new_title = data.get('new_title')
+
+    if not thread_id or not new_title:
+        return jsonify({'error': 'Missing thread_id or new_title'}), 400
+
+    rename_conversation_in_db(thread_id, new_title)
+    
+    updated_chats = get_all_conversations_from_db()
+    session['chats'] = updated_chats # Update session cache
+
+    return jsonify({
+        'message': 'Chat renamed successfully',
+        'chats': updated_chats,
+        'active_thread_id': session.get('current_thread_id') # Active thread doesn't change on rename
+    })
+
+@app.route('/toggle_pin_chat', methods=['POST'])
+def toggle_pin_chat_route():
+    data = request.get_json()
+    thread_id = data.get('thread_id')
+
+    if not thread_id:
+        return jsonify({'error': 'Missing thread_id'}), 400
+
+    success = toggle_pin_conversation_in_db(thread_id)
+    if not success:
+        return jsonify({'error': 'Failed to toggle pin status'}), 500
+    
+    updated_chats = get_all_conversations_from_db() # Get the newly ordered list
+    session['chats'] = updated_chats # Update session cache
+
+    return jsonify({
+        'message': 'Chat pin status toggled successfully',
+        'chats': updated_chats,
+        'active_thread_id': session.get('current_thread_id') # Active thread ID doesn't change on pin
+    })
+
+@app.route('/delete_chat', methods=['POST'])
+def delete_chat_route():
+    data = request.get_json()
+    thread_id_to_delete = data.get('thread_id')
+
+    if not thread_id_to_delete:
+        return jsonify({'error': 'Missing thread_id'}), 400
+
+    delete_conversation_from_db(thread_id_to_delete)
+
+    remaining_chats = get_all_conversations_from_db()
+    session['chats'] = remaining_chats # Update session cache
+
+    new_active_thread_id = session.get('current_thread_id')
+
+    if thread_id_to_delete == new_active_thread_id: # If the deleted chat was active
+        if remaining_chats:
+            new_active_thread_id = remaining_chats[0]['thread_id'] # Default to the most recent
+        else:
+            new_active_thread_id = None # No chats left, client will show placeholder
+        session['current_thread_id'] = new_active_thread_id
+    
+    return jsonify({
+        'message': 'Chat deleted successfully',
+        'chats': remaining_chats,
+        'active_thread_id': new_active_thread_id
+    })
+
+@app.route('/get_ollama_models', methods=['GET'])
+def get_ollama_models_route():
+    models_data_raw_response = None # Renamed to avoid confusion with the 'models' key
+    client_used_desc = "None"
+
+    try:
+        # Attempt 1: Default client initialization (respects OLLAMA_HOST env var or library default)
+        app.logger.info("Attempting Ollama connection with default client initialization...")
+        client_default = ollama.Client()
+        models_data_raw_response = client_default.list() # This returns a dict like {'models': [ModelObject, ...]}
+        client_used_desc = "Default ollama.Client()"
+        app.logger.info(f"Raw response object from {client_used_desc}: {models_data_raw_response}")
+
+        # Attempt 2: If default failed and OLLAMA_HOST env var is set, try explicitly with it
+        if (not models_data_raw_response or not models_data_raw_response.get('models')) and os.getenv('OLLAMA_HOST'):
+            ollama_host_env = os.getenv('OLLAMA_HOST')
+            app.logger.info(f"{client_used_desc} returned no models. OLLAMA_HOST ('{ollama_host_env}') is set. Retrying with explicit host.")
+            client_explicit_env = ollama.Client(host=ollama_host_env)
+            models_data_raw_response = client_explicit_env.list()
+            client_used_desc = f"ollama.Client(host='{ollama_host_env}') from OLLAMA_HOST"
+            app.logger.info(f"Raw response object from {client_used_desc}: {models_data_raw_response}")
+
+        # Attempt 3: If still no models, try with hardcoded 'http://localhost:11434'
+        if (not models_data_raw_response or not models_data_raw_response.get('models')):
+            hardcoded_host = 'http://localhost:11434'
+            if os.getenv('OLLAMA_HOST') != hardcoded_host:
+                app.logger.info(f"{client_used_desc} returned no models. Retrying with hardcoded host: {hardcoded_host}.")
+                client_hardcoded = ollama.Client(host=hardcoded_host)
+                models_data_raw_response = client_hardcoded.list()
+                client_used_desc = f"ollama.Client(host='{hardcoded_host}')"
+                app.logger.info(f"Raw response object from {client_used_desc}: {models_data_raw_response}")
+            else:
+                app.logger.info(f"{client_used_desc} returned no models. Hardcoded host '{hardcoded_host}' was already tried via OLLAMA_HOST or default.")
+        
+        models_list = []
+        # The client.list() method returns a dictionary, where the actual list of Model objects is under the 'models' key.
+        if models_data_raw_response and 'models' in models_data_raw_response and isinstance(models_data_raw_response['models'], list):
+            actual_model_objects_list = models_data_raw_response['models']
+            app.logger.info(f"Actual list of model objects from Ollama: {actual_model_objects_list}")
+            for model_obj in actual_model_objects_list:
+                # model_obj is an ollama.types.Model object, not a dict.
+                # Access its attributes directly.
+                try:
+                    # Ensure modified_at is serializable (it's a datetime object)
+                    modified_at_str = model_obj.modified_at.isoformat() if hasattr(model_obj, 'modified_at') and model_obj.modified_at else None
+                    
+                    # CORRECTED ATTRIBUTE ACCESS: model_obj.model instead of model_obj.name
+                    model_name_attr = getattr(model_obj, 'model', None) # Use getattr for safety
+                    if not model_name_attr:
+                        app.logger.warning(f"Model object missing 'model' attribute: {model_obj}")
+                        continue
+
+                    models_list.append({
+                        'name': model_name_attr, # Use the 'model' attribute
+                        'modified_at': modified_at_str,
+                        'size': getattr(model_obj, 'size', None) # Use getattr for safety
+                        # Add other fields if needed by the client, e.g., model_obj.digest
+                    })
+                except AttributeError as ae:
+                    app.logger.warning(f"Skipping model entry due to AttributeError: {model_obj}. Error: {ae}")
+                except Exception as e_inner:
+                    app.logger.warning(f"Skipping model entry {getattr(model_obj, 'model', 'Unknown Model')} due to other error: {e_inner}. Object: {model_obj}")
+
+        else:
+            app.logger.warning(f"No 'models' key found in Ollama response (using {client_used_desc}) or it's not a list. Full response: {models_data_raw_response}")
+            
+        app.logger.info(f"Processed models_list to be sent to client: {models_list}")
+        return jsonify({'models': models_list})
+
+    except ollama.ResponseError as e:
+        app.logger.error(f"Ollama ResponseError while trying to list models with {client_used_desc}: {str(e)}. Status code: {e.status_code}", exc_info=True)
+        return jsonify({'error': f'Ollama API error: {str(e)} (Status: {e.status_code})'}), 500
+    except ollama.RequestError as e:
+        app.logger.error(f"Ollama RequestError (e.g. connection issue) while trying to list models with {client_used_desc}: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Could not connect to Ollama: {str(e)}'}), 500
+    except Exception as e:
+        app.logger.error(f"Generic error connecting to Ollama or listing models with {client_used_desc}: {str(e)}", exc_info=True)
+        if isinstance(e, TypeError) and "not JSON serializable" in str(e):
+             app.logger.error("JSON serialization error likely due to unhandled Ollama model object structure.")
+        return jsonify({'error': f'Could not connect to Ollama or list models: {str(e)}'}), 500
+
+
+@app.route('/update_model_settings', methods=['POST'])
+def update_model_settings():
+    data = request.get_json()
+    provider = data.get('provider', 'gemini') # Default to gemini if not specified
+
+    if provider == 'gemini':
+        api_key = data.get('api_key')
+        model_name = data.get('model_name')
+        
+        if not api_key:
+            return jsonify({'error': 'API key cannot be empty for Gemini'}), 400
+            
+        gemini_models_list = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.5-flash-8b',
+                              'gemini-2.0-flash', 'gemini-2.0-flash-lite',
+                              'gemini-2.5-flash-preview-04-17', 'gemini-2.5-pro-preview-05-06']
+
+        if model_name not in gemini_models_list:
+            return jsonify({'error': 'Invalid Gemini model selection'}), 400
+        
+        # Call chat.py to reinitialize/set Gemini as active
+        success = set_active_llm_provider(provider='gemini', api_key=api_key, model_name=model_name)
+        
+        if success:
+            # Store in session for subsequent /chat calls
+            session['active_provider'] = 'gemini'
+            session['active_model_name'] = model_name # Store selected Gemini model
+            session['gemini_api_key'] = api_key # Store API key in session
+            app.logger.info(f"Gemini model settings updated and set active: {model_name}")
+            return jsonify({'message': f'Gemini model settings updated successfully. Now using {model_name}.'})
+        else:
+            app.logger.error(f"Failed to set Gemini model {model_name} in chat.py.")
+            return jsonify({'error': f'Failed to validate Gemini API key or model: {model_name}. Check server logs.'}), 400
+    
+    elif provider == 'ollama':
+        model_name = data.get('model_name')
+        if not model_name:
+            return jsonify({'error': 'Ollama model name cannot be empty.'}), 400
+
+        success = set_active_llm_provider(provider='ollama', model_name=model_name)
+        if success:
+            session['active_provider'] = 'ollama'
+            session['active_model_name'] = model_name
+            # Clear Gemini specific session keys if any, or ensure they are not used when Ollama is active
+            session.pop('gemini_api_key', None) 
+            app.logger.info(f"Ollama model set active: {model_name}")
+            return jsonify({'message': f'Successfully switched to Ollama model: {model_name}.'})
+        else:
+            app.logger.error(f"Failed to set Ollama model {model_name} in chat.py. It might not exist or Ollama is down.")
+            return jsonify({'error': f'Failed to set Ollama model: {model_name}. Ensure it exists and Ollama is running.'}), 400
+    else:
+        return jsonify({'error': 'Unknown model provider.'}), 400
+
 if __name__ == '__main__':
     # Configure basic logging for Flask app if not already configured elsewhere
-    if not app.debug: # Example: Only configure if not in debug mode, or adjust as needed
+    if not app.debug: 
         import logging
         logging.basicConfig(level=logging.INFO)
+    else: # Ensure logger is available in debug mode too
+        app.logger.setLevel(logging.INFO)
+
 
     # Change the port from 5000 to 5001 to avoid conflicts with AirPlay Receiver
     app.run(debug=True, port=5001)

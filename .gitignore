@@ -26,3 +26,7 @@ Thumbs.db
 # IDE-specific files
 .idea/
 .vscode/
+
+# Database files
+*.sqlite3
+*.db

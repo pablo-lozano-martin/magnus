@@ -3,3 +3,4 @@ python-dotenv
 google-generativeai
 langgraph
 langchain-core
+ollama
