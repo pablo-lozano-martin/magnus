@@ -1497,3 +1497,127 @@ html[data-theme="dark"] .notification {
 html[data-theme="dark"] .notification span {
     color: var(--text-color);
 }
+
+/* Markdown Styling */
+.markdown-content {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+.markdown-content h1 {
+    font-size: 1.5em;
+}
+
+.markdown-content h2 {
+    font-size: 1.3em;
+}
+
+.markdown-content h3 {
+    font-size: 1.1em;
+}
+
+.markdown-content h4, 
+.markdown-content h5, 
+.markdown-content h6 {
+    font-size: 1em;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+    padding-left: 1.5em;
+    margin: 0.5em 0;
+}
+
+.markdown-content li {
+    margin-bottom: 0.25em;
+}
+
+.markdown-content p {
+    margin: 0.5em 0;
+}
+
+.markdown-content pre {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-radius: 6px;
+    padding: 0.5em;
+    overflow-x: auto;
+    margin: 0.5em 0;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.markdown-content code {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.85em;
+    padding: 0.1em 0.3em;
+    background-color: rgba(0, 0, 0, 0.05);
+    border-radius: 3px;
+}
+
+.markdown-content pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+.markdown-content a {
+    color: var(--accent-color);
+    text-decoration: none;
+}
+
+.markdown-content a:hover {
+    text-decoration: underline;
+}
+
+.markdown-content blockquote {
+    margin: 0.5em 0;
+    padding-left: 1em;
+    border-left: 4px solid var(--accent-color);
+    color: var(--text-color-light);
+}
+
+.markdown-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+}
+
+.markdown-content table th,
+.markdown-content table td {
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    padding: 0.5em;
+    text-align: left;
+}
+
+.markdown-content table th {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* Dark theme adjustments for markdown content */
+html[data-theme="dark"] .markdown-content pre,
+html[data-theme="dark"] .markdown-content code {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+html[data-theme="dark"] .markdown-content table th,
+html[data-theme="dark"] .markdown-content table td {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+html[data-theme="dark"] .markdown-content table th {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme="dark"] .markdown-content blockquote {
+    color: rgba(255, 255, 255, 0.6);
+}

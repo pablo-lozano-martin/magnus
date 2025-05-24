@@ -426,6 +426,25 @@ document.addEventListener('DOMContentLoaded', function() {
         const timeText = getCurrentTime();
         let messageHTML = '';
         
+        // Process text content based on sender
+        let processedText = text;
+        if (!isSent) {
+            // For AI responses, parse markdown
+            // Configure marked with options for GitHub Flavored Markdown
+            marked.setOptions({
+                gfm: true,
+                breaks: true,
+                sanitize: false, // Allow HTML
+                smartLists: true,
+                smartypants: true
+            });
+            
+            processedText = marked.parse(text);
+        } else {
+            // For user-sent messages, escape HTML but preserve line breaks
+            processedText = escapeHtml(text).replace(/\n/g, '<br>');
+        }
+        
         if (thinkingContent && !isSent) {
             messageHTML = `
                 <div class="message-bubble">
@@ -439,14 +458,14 @@ document.addEventListener('DOMContentLoaded', function() {
                             <div class="thinking-text">${thinkingContent.replace(/\n/g, '<br>')}</div>
                         </div>
                     </div>
-                    <div class="message-text">${text}</div>
+                    <div class="message-text markdown-content">${processedText}</div>
                 </div>
                 <div class="message-time">${timeText}</div>
             `;
         } else {
             messageHTML = `
                 <div class="message-bubble">
-                    <div class="message-text">${text}</div>
+                    <div class="message-text ${!isSent ? 'markdown-content' : ''}">${processedText}</div>
                 </div>
                 <div class="message-time">${timeText}</div>
             `;
@@ -455,6 +474,13 @@ document.addEventListener('DOMContentLoaded', function() {
         messageDiv.innerHTML = messageHTML;
         messagesContainer.appendChild(messageDiv);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    // Helper function to escape HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     window.toggleThinking = function(header) {
