@@ -61,6 +61,8 @@
     <script>
         const initialChats = {{ initial_chats | tojson }};
         const initialActiveThreadId = {{ initial_active_thread_id | tojson }};
+        const currentProvider = {{ current_provider | tojson }};
+        const currentModel = {{ current_model | tojson }};
     </script>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 
@@ -86,8 +88,8 @@
         <a href="#" class="settings-menu-item" id="settings-models-item" data-action="models">
             <span><i class="fa-solid fa-cubes"></i> Models</span>
         </a>
-        <a href="#" class="settings-menu-item" data-action="info">
-            <span><i class="fa-solid fa-circle-info"></i> Info</span>
+        <a href="#" class="settings-menu-item" id="settings-advanced-item" data-action="advanced">
+            <span><i class="fa-solid fa-gears"></i> Advanced Settings</span>
         </a>
     </div>
 
@@ -133,6 +135,7 @@
                         <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash 8B</option>
                         <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
                         <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
+                        <option value="gemini-2.0-flash-thinking-exp">Gemini 2.0 Flash Thinking (Experimental)</option>
                         <option value="gemini-2.5-flash-preview-04-17">Gemini 2.5 Flash Preview 04-17</option>
                         <option value="gemini-2.5-pro-preview-05-06">Gemini 2.5 Pro Preview 05-06</option>
                     </select>
@@ -160,6 +163,66 @@
         <div class="models-modal-actions">
             <button class="models-modal-button cancel" id="models-modal-cancel">Cancel</button>
             <button class="models-modal-button save" id="models-modal-save">Save</button>
+        </div>
+    </div>
+
+    <!-- Advanced Settings Modal -->
+    <div class="modal-backdrop" id="advanced-modal-backdrop" style="display: none;"></div>
+    <div class="models-modal" id="advanced-modal-dialog" style="display: none;">
+        <h2 class="models-modal-title">Advanced Settings</h2>
+
+        <div class="models-modal-tabs">
+            <button class="advanced-modal-tab-button active" data-tab="database">Database</button>
+            <button class="advanced-modal-tab-button" data-tab="about">About</button>
+        </div>
+
+        <!-- Database Tab Content -->
+        <div class="advanced-modal-tab-content active" id="database-tab-content">
+            <div class="models-modal-section">
+                <h3>Database Management</h3>
+                <div class="advanced-modal-warning">
+                    <div class="warning-icon">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                    </div>
+                    <div class="warning-text">
+                        <strong>Warning:</strong> This action will permanently delete all your chat history and conversations. This cannot be undone.
+                    </div>
+                </div>
+                <button id="delete-all-chats" class="delete-all-button">
+                    <i class="fa-solid fa-trash-can"></i> Delete All Chat History
+                </button>
+                <div class="advanced-modal-info">
+                    <p>This will remove all conversations and messages from the database. The application will restart with a clean slate.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- About Tab Content -->
+        <div class="advanced-modal-tab-content" id="about-tab-content">
+            <div class="models-modal-section">
+                <h3>About Magnus</h3>
+                <div class="about-content">
+                    <div class="about-logo">
+                        <span class="about-emoji">🧠</span>
+                        <h4>Magnus Chat Assistant</h4>
+                        <p class="version">Version v0.1</p>
+                    </div>
+                    <div class="about-info">
+                        <p><strong>Created by:</strong> Pablo Lozano Martín</p>
+                        <p><strong>Open Source Project</strong></p>
+                        <p>Magnus is an AI-powered chat assistant that supports both Gemini and Ollama models with a beautiful neumorphic design.</p>
+                        <div class="about-links">
+                            <a href="https://github.com/pablo-lozano-martin/magnus" target="_blank" class="github-link">
+                                <i class="fa-brands fa-github"></i> View on GitHub
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="models-modal-actions">
+            <button class="models-modal-button cancel" id="advanced-modal-close">Close</button>
         </div>
     </div>
 </body>

@@ -4,12 +4,14 @@ import ollama # Import ollama
 from typing import TypedDict, Annotated
 import operator
 import logging
+import json  # Import for prettier logging of responses
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
 # Configure logging for this module
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # Ensure logging level is at least INFO
 
 # --- Global LLM Provider State ---
 ACTIVE_PROVIDER = "gemini"  # 'gemini' or 'ollama'
@@ -129,13 +131,72 @@ def _call_gemini_node_internal(state: GraphState):
         return {"messages": [AIMessage(content="Error: Invalid user input format for current prompt.")]}
 
     try:
+        logger.info(f"🔍 Calling Gemini model: {GEMINI_MODEL_NAME} with prompt: {current_user_prompt_text[:100]}...")
+        
         chat_session = gemini_model.start_chat(history=gemini_history_for_chat_start)
         response = chat_session.send_message(current_user_prompt_text)
+        
+        # Log the raw response structure for debugging
+        try:
+            logger.info(f"📥 Raw Gemini response object properties: {dir(response)}")
+            if hasattr(response, 'candidates') and response.candidates:
+                logger.info(f"📄 Gemini candidate count: {len(response.candidates)}")
+                for i, candidate in enumerate(response.candidates):
+                    logger.info(f"📄 Candidate {i} properties: {dir(candidate)}")
+                    if hasattr(candidate, 'content') and candidate.content:
+                        logger.info(f"📄 Candidate {i} content properties: {dir(candidate.content)}")
+        except Exception as e:
+            logger.warning(f"Failed to log detailed response structure: {e}")
+        
+        logger.info(f"📤 Gemini response text: {response.text[:500]}...")
+        
+        # Check if this is a thinking model and extract thinking content
+        is_thinking_model = "thinking" in GEMINI_MODEL_NAME.lower()
+        thinking_content = None
         ai_response_text = response.text
+        
+        if is_thinking_model and hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            logger.info("🧠 Attempting to extract thinking from thinking-enabled model...")
+            
+            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                thinking_parts = []
+                response_parts = []
+                
+                logger.info(f"🧠 Examining candidate parts: {candidate.content.parts}")
+                
+                for part in candidate.content.parts:
+                    if hasattr(part, 'thought') and part.thought:
+                        thinking_parts.append(part.text if hasattr(part, 'text') else str(part))
+                        logger.info(f"🧠 Found thinking part: {part.text[:200]}...")
+                    elif hasattr(part, 'text'):
+                        response_parts.append(part.text)
+                        logger.info(f"💬 Found response part: {part.text[:200]}...")
+                
+                if thinking_parts:
+                    thinking_content = '\n'.join(thinking_parts)
+                    logger.info(f"🧠 Extracted thinking content: {thinking_content[:500]}...")
+                if response_parts:
+                    ai_response_text = '\n'.join(response_parts)
+                    logger.info(f"💬 Extracted final response: {ai_response_text[:500]}...")
+        
+        # Create response with thinking content if available
+        if thinking_content:
+            response_data = {
+                "content": ai_response_text,
+                "thinking": thinking_content,
+                "has_thinking": True
+            }
+            logger.info("📦 Created structured response with thinking and content")
+            return {"messages": [AIMessage(content=json.dumps(response_data))]}
+        else:
+            logger.info("📦 Returning standard response (no thinking detected)")
+            return {"messages": [AIMessage(content=ai_response_text)]}
+            
     except Exception as e:
         logger.error(f"Gemini API call failed: {e}", exc_info=True)
         ai_response_text = "Sorry, I encountered an error while processing your request with Gemini."
-    return {"messages": [AIMessage(content=ai_response_text)]}
+        return {"messages": [AIMessage(content=ai_response_text)]}
 
 def _call_ollama_node_internal(state: GraphState):
     if not ollama_client:
@@ -159,16 +220,120 @@ def _call_ollama_node_internal(state: GraphState):
          logger.error("No valid messages to send to Ollama.")
          return {"messages": [AIMessage(content="Error: No message to send.")]}
 
+    # Log the request being sent to Ollama
+    last_user_message = next((msg['content'] for msg in reversed(ollama_messages) if msg['role'] == 'user'), None)
+    logger.info(f"🔍 Calling Ollama model: {OLLAMA_MODEL_NAME} with prompt: {last_user_message[:100] if last_user_message else 'unknown'}...")
+    logger.info(f"📤 Full Ollama message history (count: {len(ollama_messages)}): {json.dumps(ollama_messages, indent=2)}")
+
+    # Check if this is a thinking model
+    is_thinking_model = any(thinking_keyword in OLLAMA_MODEL_NAME.lower() for thinking_keyword in ['thinking', 'think', 'reasoning', 'reason'])
+
     try:
         response = ollama_client.chat(
             model=OLLAMA_MODEL_NAME,
-            messages=ollama_messages
+            messages=ollama_messages,
+            stream=False,
+            options={
+                'temperature': 0.7,
+                'top_p': 0.9
+            }
         )
-        ai_response_text = response['message']['content']
+        
+        # Handle the Ollama response object properly
+        try:
+            # Extract and log relevant parts of the response instead of trying to JSON dump the entire object
+            response_dict = {
+                'model': response.model if hasattr(response, 'model') else OLLAMA_MODEL_NAME,
+                'message': {
+                    'role': response.message.role if hasattr(response, 'message') and hasattr(response.message, 'role') else 'assistant',
+                    'content': response.message.content if hasattr(response, 'message') and hasattr(response.message, 'content') else ''
+                },
+                'done': hasattr(response, 'done') and response.done
+            }
+            logger.info(f"📥 Raw Ollama response (converted to dict): {json.dumps(response_dict, indent=2)}")
+            
+            # Extract the actual text content
+            ai_response_text = response.message.content if hasattr(response, 'message') and hasattr(response.message, 'content') else ""
+            logger.info(f"📤 Ollama response text: {ai_response_text[:500]}...")
+        except AttributeError as e:
+            # If we can't access attributes as expected, try a more careful approach with getattr
+            ai_response_text = ""
+            logger.warning(f"Attribute error when extracting response content: {e}")
+            
+            if hasattr(response, 'message'):
+                msg = response.message
+                if hasattr(msg, 'content'):
+                    ai_response_text = msg.content
+            
+            # If we still don't have content, try accessing as a dict
+            if not ai_response_text and isinstance(response, dict) and 'message' in response:
+                msg = response['message']
+                if isinstance(msg, dict) and 'content' in msg:
+                    ai_response_text = msg['content']
+            
+            # Last resort
+            if not ai_response_text:
+                ai_response_text = str(response)
+                logger.warning(f"Using string representation of response: {ai_response_text[:100]}...")
+        
+        thinking_content = None
+        
+        # For thinking models or models that happen to include thinking patterns
+        # Now look for thinking tags regardless of whether the model name includes 'thinking'
+        logger.info("🧠 Checking for thinking patterns in response...")
+        # Look for common thinking delimiters in the response
+        thinking_patterns = [
+            (r'<think>(.*?)</think>', lambda m: m.group(1)),
+            (r'<thinking>(.*?)</thinking>', lambda m: m.group(1))
+        ]
+        
+        import re
+        for pattern, extractor in thinking_patterns:
+            matches = re.findall(pattern, ai_response_text, re.DOTALL | re.IGNORECASE)
+            if matches:
+                thinking_content = '\n'.join(matches).strip()
+                logger.info(f"🧠 Extracted thinking via pattern match: {thinking_content[:200]}...")
+                # Remove thinking content from the main response
+                ai_response_text = re.sub(pattern, '', ai_response_text, flags=re.DOTALL | re.IGNORECASE).strip()
+                logger.info(f"💬 Cleaned response after removing thinking: {ai_response_text[:200]}...")
+                break
+        
+        # If no explicit thinking delimiters found, check if response starts with reasoning language
+        if not thinking_content:
+            logger.info("🔍 No explicit thinking delimiters found, looking for implicit reasoning patterns...")
+            reasoning_starters = [
+                r'^(Let me think.*?)(?=\n\n|\. (?=[A-Z]))',
+                r'^(I need to consider.*?)(?=\n\n|\. (?=[A-Z]))',
+                r'^(First, I should.*?)(?=\n\n|\. (?=[A-Z]))',
+                r'^(To answer this.*?)(?=\n\n|\. (?=[A-Z]))'
+            ]
+            
+            for starter_pattern in reasoning_starters:
+                match = re.search(starter_pattern, ai_response_text, re.DOTALL | re.IGNORECASE)
+                if match:
+                    thinking_content = match.group(1).strip()
+                    logger.info(f"🧠 Extracted implied thinking: {thinking_content[:200]}...")
+                    ai_response_text = ai_response_text[match.end():].strip()
+                    logger.info(f"💬 Cleaned response after implied thinking: {ai_response_text[:200]}...")
+                    break
+        
+        # Create response with thinking content if available
+        if thinking_content:
+            response_data = {
+                "content": ai_response_text,
+                "thinking": thinking_content,
+                "has_thinking": True
+            }
+            logger.info("📦 Created structured response with thinking and content")
+            return {"messages": [AIMessage(content=json.dumps(response_data))]}
+        else:
+            logger.info("📦 Returning standard response (no thinking detected)")
+            return {"messages": [AIMessage(content=ai_response_text)]}
+            
     except Exception as e:
         logger.error(f"Ollama API call failed for model {OLLAMA_MODEL_NAME}: {e}", exc_info=True)
         ai_response_text = f"Sorry, I encountered an error while processing your request with Ollama model {OLLAMA_MODEL_NAME}."
-    return {"messages": [AIMessage(content=ai_response_text)]}
+        return {"messages": [AIMessage(content=ai_response_text)]}
 
 # 2. Node to call the active LLM
 def call_llm_node(state: GraphState):
@@ -192,6 +357,14 @@ app_graph = workflow.compile()
 def invoke_chat_graph(full_langchain_history: list[BaseMessage]) -> str:
     global ACTIVE_PROVIDER, gemini_model, ollama_client, OLLAMA_MODEL_NAME
 
+    logger.info(f"⚙️ Invoking chat graph with provider: {ACTIVE_PROVIDER}")
+    logger.info(f"📝 Message history length: {len(full_langchain_history)}")
+    
+    if full_langchain_history:
+        last_message = full_langchain_history[-1]
+        if isinstance(last_message, HumanMessage):
+            logger.info(f"📝 Last user message: {last_message.content[:200]}...")
+
     if ACTIVE_PROVIDER == "gemini" and (not GEMINI_API_KEY or not gemini_model):
         logger.error("Cannot invoke chat graph with Gemini: API_KEY or model not configured.")
         return "Error: Gemini AI service is not configured. Please check API key and model settings."
@@ -202,11 +375,22 @@ def invoke_chat_graph(full_langchain_history: list[BaseMessage]) -> str:
     inputs = {"messages": full_langchain_history}
     
     try:
+        logger.info("🔄 Starting graph execution...")
         final_graph_state = app_graph.invoke(inputs)
-        # ... (rest of the error handling and response extraction remains similar) ...
+        logger.info("✅ Graph execution completed")
+        
         if final_graph_state and final_graph_state.get('messages'):
             ai_response_message = final_graph_state['messages'][-1]
             if isinstance(ai_response_message, AIMessage) and isinstance(ai_response_message.content, str):
+                # Check if the response is JSON with thinking content
+                try:
+                    if ai_response_message.content.startswith('{') and '"thinking"' in ai_response_message.content:
+                        parsed = json.loads(ai_response_message.content)
+                        logger.info(f"🧠 Final response contains thinking. Content length: {len(parsed.get('content', ''))}, Thinking length: {len(parsed.get('thinking', ''))}")
+                    else:
+                        logger.info(f"💬 Final response content (no thinking): {ai_response_message.content[:200]}...")
+                except:
+                    pass
                 return ai_response_message.content
             else:
                 logger.error(f"Graph returned unexpected message type or content. Last message: {ai_response_message}")
